@@ -401,6 +401,42 @@ INSERT INTO staffing_requirements (department_id, shift_type, category, min_coun
   (23, 'malam', 'tenaga_keperawatan', 1, 2, NULL);
 
 -- ===========================
+-- ADMIN USERS (4 roles)
+-- ===========================
+DELETE FROM admin_sessions;
+DELETE FROM audit_logs;
+DELETE FROM api_request_logs;
+DELETE FROM api_keys;
+DELETE FROM webhook_configs;
+DELETE FROM simrs_config;
+DELETE FROM admin_users;
+
+INSERT INTO admin_users (username, password_hash, salt, name, role, is_active) VALUES ('admin', 'c8acbc43e0d995710845a3386dea2d9e97c98dd1166de6bb1543b607a1e9ba56', '3bfc3b8e16141c6cd06cffd0fa5bce6c', 'Super Administrator', 'super_admin', 1);
+INSERT INTO admin_users (username, password_hash, salt, name, role, is_active) VALUES ('sdm', 'f90b89c54c7cdd99dc614319c294b50a093be137e0f74f6509dae7cc80148551', 'c1e25e656c8ab33d66ad1695b2f9505e', 'Admin SDM RSSA', 'admin_sdm', 1);
+INSERT INTO admin_users (username, password_hash, salt, name, role, department_id, is_active) VALUES ('dept', 'd3009e1f1748d30b9337f9a16f480e59a86e8ba7ff469be2a762489963684054', '24fc309a89fc93092522f33153659823', 'Admin Departemen IGD', 'admin_dept', 1, 1);
+INSERT INTO admin_users (username, password_hash, salt, name, role, is_active) VALUES ('viewer', '69376b0a025bf322f61f67a40d84a5e70e9404f8465a64f0d1d07c7af6cc44f5', '64f23e5d4b2f54bcff48a709286284a5', 'Staff Viewer', 'viewer', 1);
+
+-- ===========================
+-- SIMRS CONFIG (Konseptual)
+-- ===========================
+INSERT INTO simrs_config (config_key, config_value, description) VALUES 
+  ('simrs_base_url', 'https://simrs.rssa.go.id/api', 'Base URL API SIMRS'),
+  ('simrs_api_key', '', 'API Key untuk integrasi SIMRS'),
+  ('simrs_sync_interval', '300', 'Interval sinkronisasi (detik)'),
+  ('simrs_sync_enabled', 'false', 'Status aktif sinkronisasi'),
+  ('simrs_last_sync', '', 'Timestamp sync terakhir'),
+  ('simrs_endpoint_employees', '/v1/employees', 'Endpoint data pegawai SIMRS'),
+  ('simrs_endpoint_schedules', '/v1/schedules', 'Endpoint jadwal SIMRS'),
+  ('simrs_endpoint_departments', '/v1/departments', 'Endpoint departemen SIMRS');
+
+-- ===========================
+-- WEBHOOK CONFIGS (Contoh)
+-- ===========================
+INSERT INTO webhook_configs (name, url, events, headers, is_active) VALUES 
+  ('SIMRS Notification', 'https://simrs.rssa.go.id/webhook/biometric', 'attendance:created,attendance:updated', '{"Content-Type":"application/json"}', 0),
+  ('Alert System', 'https://alert.rssa.go.id/webhook/staffing', 'staffing:critical,access:denied', '{"Content-Type":"application/json"}', 0);
+
+-- ===========================
 -- ACCESS LOGS
 -- ===========================
 INSERT INTO access_logs (employee_id, device_id, access_time, room_name, access_type, method) VALUES 

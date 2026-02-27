@@ -1,85 +1,67 @@
-# SIMRS Monitoring Biometrik - RSSA Malang
+# MONITORING Biometrik - RSSA Malang
 
 ## Project Overview
-- **Nama**: SIMRS Monitoring Biometrik RSSA
+- **Nama**: Monitoring Biometrik RSSA
 - **RS**: Rumah Sakit dr. Saiful Anwar (RSSA) Malang
 - **Tujuan**: Monitoring kehadiran dan kinerja DPJP, PPDS, dan seluruh SDM RSSA melalui biometrik (Face Recognition & Fingerprint)
 - **Konteks**: RS Pendidikan (FKUB) - perlu monitoring dual-role DPJP (klinis + pendidikan)
 
 ## URLs
 - **Sandbox**: https://3000-i5vf5yitz4pkh2o1v8egg-cbeee0f9.sandbox.novita.ai
+- **GitHub**: https://github.com/liberyansan/Monitoring-Biometrik-DPJP-RSSA
 - **Tech Stack**: Hono + TypeScript + Cloudflare D1 + TailwindCSS + Chart.js
+
+## Login & Role-Based Access
+
+| Username | Password | Role | Akses |
+|----------|----------|------|-------|
+| `admin` | `admin123` | Super Admin | Full access (CMS, API Mgmt, Audit) |
+| `sdm` | `sdm123` | Admin SDM | CMS pegawai, jadwal, departemen, laporan |
+| `dept` | `dept123` | Admin Departemen | Read pegawai/jadwal, laporan departemen |
+| `viewer` | `viewer123` | Viewer | Dashboard, laporan read-only |
 
 ## Fitur yang Sudah Selesai
 
-### 1. Dashboard Utama
-- Statistik real-time: total pegawai (70), kehadiran hari ini, DPJP aktif, PPDS, compliance DPJP
-- Kehadiran per 7 kategori SDM dengan progress bar
-- Live feed aktivitas biometrik terkini
-- Chart distribusi SDM & metode biometrik (Face vs Fingerprint)
+### Monitoring (Public)
+1. **Dashboard Utama** - Statistik real-time (70 pegawai, kehadiran, DPJP, PPDS, compliance)
+2. **Overview SDM** - Distribusi 7 kategori, registrasi biometrik, sub-role breakdown
+3. **Monitoring DPJP** - Dual-role (klinis + pendidikan), compliance 30 hari, jadwal harian
+4. **Monitoring Pendidikan** - PPDS, Fellow, Co-Ass, rotasi, pembimbing
+5. **Monitoring Keperawatan** - Shift per unit kritis (ICU, IGD, OK, NICU, ICCU)
+6. **Monitoring Kefarmasian** - Apoteker, TTK, shift farmasi
+7. **Staffing Monitor** - Alert kekurangan SDM area kritis
+8. **Data Pegawai** - 70 pegawai, filter, detail modal
+9. **Kehadiran** - Log biometrik, confidence score, metode
+10. **Akses Ruangan** - Audit ruangan terbatas (granted/denied)
+11. **Perangkat Biometrik** - 15 device (12 aktif, 1 maintenance, 2 nonaktif)
+12. **Laporan** - Trend kehadiran 7 hari, compliance DPJP 30 hari
 
-### 2. Overview SDM (`/api/sdm/summary`)
-- Distribusi seluruh 7 kategori SDM dengan detail sub-role
-- Accordion view per kategori dengan breakdown kehadiran per sub-role
-- Status registrasi biometrik per kategori (Face, Finger, Keduanya)
-- Pie chart distribusi & bar chart biometrik
+### Halaman Login
+- Login form dengan username/password
+- Password hashing PBKDF2 (Web Crypto API, 100k iterations)
+- Session token (HttpOnly cookie, 8 jam expire)
+- Demo account info di halaman login
 
-### 3. Monitoring DPJP (`/api/dpjp/monitoring`, `/api/dpjp/:id/profile`)
-- **Dual-Role Tracking**: Tab Peran Klinis + Tab Peran Pendidikan
-- Jadwal harian dengan filter tanggal
-- Compliance rate per DPJP (30 hari)
-- Profil DPJP dengan daftar PPDS/Fellow yang dibimbing
-- Summary: total jadwal, selesai, terjadwal, tidak hadir
+### CMS (Content Management System)
+- **Kelola Pegawai** - CRUD 70+ pegawai, edit form, soft delete
+- **Import CSV** - Import data pegawai dari CSV (parse header, validasi)
+- **Kelola Departemen** - CRUD 30 departemen, tipe, lokasi, status kritis
+- **Kelola Perangkat** - CRUD perangkat biometrik, IP, lokasi, status
+- **Kelola Jadwal** - Tab: Jadwal DPJP, Shift Perawat, Rotasi PPDS
+- **User Admin** - CRUD admin user (4 role), reset password, aktif/nonaktif
 
-### 4. Monitoring Pendidikan (`/api/pendidikan/monitoring`)
-- PPDS (Residen): rotasi aktif, pembimbing (klik untuk lihat profil DPJP), tahapan (junior/senior/chief)
-- Fellow (Sub-Spesialis): rotasi, pembimbing
-- Co-Ass / Dokter Muda: stase aktif
-- Kehadiran 30 hari, clock-in hari ini
-- Link interaktif ke profil pembimbing DPJP
+### API Management
+- **API Keys** - Generate/revoke key per perangkat, prefix `rssa_xxx`
+- **API Key Hash** - Key hash SHA-256, prefix tampil, key asli hanya sekali
+- **Rate Limit** - Configurable per key (default 60 req/min)
+- **IP Whitelist** - Optional per key
+- **API Logs** - Request log dengan status code, response time, error
+- **Dokumentasi API** - Inline docs endpoint `POST /api/v1/attendance`
 
-### 5. Monitoring Keperawatan (`/api/shifts?category=tenaga_keperawatan`)
-- Jadwal shift per unit (ICU, IGD, OK, NICU, ICCU, Rawat Inap, Kamar Bersalin)
-- Filter: tanggal, unit, tipe shift (pagi/siang/malam)
-- Penanda PJ Shift, area penempatan
-- Indikator clock-in dan status shift
-
-### 6. Monitoring Kefarmasian (`/api/employees?category=tenaga_kefarmasian`)
-- Profil Apoteker dan TTK
-- Jadwal shift farmasi (Rawat Jalan, Rawat Inap, Depo IGD)
-- Status kehadiran hari ini
-
-### 7. Staffing Monitor (`/api/staffing/monitor`)
-- Monitoring ketersediaan SDM di area kritis (ICU, IGD, OK, NICU, Farmasi, Kamar Bersalin)
-- Alert otomatis jika kekurangan tenaga per shift
-- Perbandingan: minimum, ideal, aktual hadir
-
-### 8. Data Pegawai (`/api/employees`)
-- 70 pegawai dalam 7 kategori SDM
-- Filter: kategori, unit, prioritas (P1-P4), pencarian nama/NIP
-- Detail modal: profil, biometrik, kehadiran, jadwal, rotasi, akses, compliance DPJP
-
-### 9. Kehadiran (`/api/attendance`)
-- Log absensi biometrik seluruh pegawai
-- Filter: tanggal, kategori, tipe (clock in/out/akses)
-- Confidence score, metode (face/fingerprint), lokasi
-
-### 10. Akses Ruangan (`/api/access-logs`)
-- Audit log akses ruangan terbatas (ICU, OK, NICU, ICCU, Farmasi, CSSD)
-- Summary akses per ruangan (granted/denied)
-- Filter: tanggal, tipe, ruangan
-
-### 11. Perangkat Biometrik (`/api/devices`)
-- 15 perangkat (Face Recognition, Fingerprint, Combo)
-- Status: aktif (12), maintenance (1), nonaktif (2)
-- Lokasi, IP address, tipe perangkat
-
-### 12. Laporan & Analitik
-- `GET /api/reports/attendance-summary` - Trend kehadiran 7 hari per kategori
-- `GET /api/reports/dpjp-compliance` - Compliance DPJP 30 hari
-- `GET /api/reports/access-summary` - Summary akses ruangan
-- `GET /api/reports/sdm-overview` - Overview biometrik per kategori & status kerja
-- Komposisi pegawai berdasarkan status kepegawaian (PNS, PPPK, Kontrak, Outsource)
+### Webhook & Integrasi SIMRS
+- **Webhook Config** - CRUD webhook URL, events, secret
+- **Integrasi SIMRS** - Konfigurasi konseptual (base URL, API key, interval sync)
+- **Audit Log** - Riwayat seluruh perubahan CMS (create, update, delete, login)
 
 ## Arsitektur 7 Kategori SDM
 
@@ -90,42 +72,58 @@
 | 3 | Tenaga Keperawatan | 15 | P1-P2 | Perawat ICU/ICCU/NICU/IGD/OK/Anestesi/Klinis, Bidan |
 | 4 | Tenaga Kefarmasian | 4 | P2-P3 | Apoteker, TTK |
 | 5 | Tenaga Penunjang Medis | 7 | P3 | Radiografer, Analis Lab, Fisioterapis, Ahli Gizi, Perekam Medis |
-| 6 | Manajemen & Administrasi | 9 | P3 | Direksi, Staff SDM, Staff IT, Staff Keuangan, Staff Admisi |
-| 7 | Tenaga Penunjang Non-Medis | 8 | P3-P4 | Security, Driver Ambulans, Teknisi, CSSD, Laundry, Cleaning |
+| 6 | Manajemen & Administrasi | 9 | P3 | Direksi, Staff SDM, IT, Keuangan, Admisi |
+| 7 | Tenaga Penunjang Non-Medis | 8 | P3-P4 | Security, Driver, Teknisi, CSSD, Laundry, Cleaning |
 
 ## API Endpoints
 
-### Dashboard
+### Auth
+- `POST /api/auth/login` - Login `{username, password}`
+- `POST /api/auth/logout` - Logout
+- `GET /api/auth/me` - Current user info
+
+### Dashboard & Monitoring
 - `GET /api/dashboard/stats` - Statistik utama
-- `GET /api/dashboard/live-feed?limit=25` - Feed aktivitas terkini
+- `GET /api/dashboard/live-feed?limit=25` - Feed aktivitas
 - `GET /api/dashboard/category-attendance` - Kehadiran per kategori
-
-### SDM
-- `GET /api/sdm/summary` - Overview SDM per sub-role & biometrik
-
-### DPJP
-- `GET /api/dpjp/monitoring?date=YYYY-MM-DD` - Jadwal & compliance DPJP
-- `GET /api/dpjp/:id/profile` - Profil DPJP dual-role (klinis + pendidikan + supervised PPDS)
-
-### Pendidikan
+- `GET /api/sdm/summary` - Overview SDM
+- `GET /api/dpjp/monitoring?date=` - Jadwal DPJP
+- `GET /api/dpjp/:id/profile` - Profil DPJP dual-role
 - `GET /api/pendidikan/monitoring` - PPDS, Fellow, Co-Ass
-
-### Pegawai
-- `GET /api/employees?category=&role=&search=&department_id=&priority=&sub_role=&employment_type=`
-- `GET /api/employees/:id` - Detail pegawai + attendance stats + rotations + DPJP compliance
-
-### Shift & Staffing
+- `GET /api/staffing/monitor` - Staffing area kritis
 - `GET /api/shifts?date=&department_id=&shift=&category=` - Jadwal shift
-- `GET /api/staffing/monitor` - Monitoring ketersediaan SDM area kritis
+- `GET /api/employees?category=&role=&search=&department_id=&priority=`
+- `GET /api/employees/:id` - Detail pegawai
+- `GET /api/attendance?date=&category=&type=` - Log kehadiran
+- `GET /api/access-logs?date=&type=&room=` - Log akses
+- `GET /api/devices` - Perangkat biometrik
+- `GET /api/departments` - Departemen
 
-### Attendance & Access
-- `GET /api/attendance?date=&category=&type=&role=` - Log kehadiran
-- `POST /api/attendance` - Input kehadiran biometrik `{biometric_id, device_code, method, confidence_score, scan_type}`
-- `GET /api/access-logs?date=&type=&room=` - Log akses ruangan
+### CMS (Auth Required)
+- `POST /api/cms/employees` - Tambah pegawai
+- `PUT /api/cms/employees/:id` - Edit pegawai
+- `DELETE /api/cms/employees/:id` - Hapus pegawai (soft)
+- `POST /api/cms/employees/import` - Import CSV
+- `POST /api/cms/departments` - Tambah departemen
+- `PUT /api/cms/departments/:id` - Edit departemen
+- `POST /api/cms/devices` - Tambah perangkat (super_admin)
+- `PUT /api/cms/devices/:id` - Edit perangkat (super_admin)
+- `POST /api/cms/dpjp-schedules` - Tambah jadwal DPJP
+- `POST /api/cms/shift-schedules` - Tambah shift
+- `POST /api/cms/ppds-rotations` - Tambah rotasi PPDS
 
-### Perangkat & Departemen
-- `GET /api/devices` - Daftar perangkat biometrik
-- `GET /api/departments` - Daftar departemen/unit
+### Admin (Super Admin)
+- `GET/POST/PUT /api/cms/users` - CRUD admin user
+- `GET/POST/PUT/DELETE /api/cms/api-keys` - CRUD API keys
+- `GET /api/cms/api-logs` - Request log
+- `GET/POST/PUT /api/cms/webhooks` - CRUD webhooks
+- `GET/PUT /api/cms/simrs-config` - Konfigurasi SIMRS
+- `GET /api/cms/audit-logs` - Audit log
+
+### Public API (API Key Required)
+- `POST /api/v1/attendance` - Input kehadiran dari perangkat
+  - Header: `X-API-Key: rssa_xxx...`
+  - Body: `{biometric_id, device_code, method, confidence_score, scan_type}`
 
 ### Laporan
 - `GET /api/reports/attendance-summary?start=&end=` - Trend kehadiran
@@ -135,22 +133,22 @@
 
 ## Data Architecture
 - **Database**: Cloudflare D1 (SQLite)
-- **Tables**: employees, departments, devices, attendance, dpjp_schedules, ppds_rotations, shift_schedules, staffing_requirements, access_logs
-- **Migration**: migrations/0001_initial_schema.sql, migrations/0002_expand_sdm.sql
-- **Seed**: seed.sql (70 pegawai, 30 departemen, 15 perangkat)
+- **Tables**: employees, departments, devices, attendance, dpjp_schedules, ppds_rotations, shift_schedules, staffing_requirements, access_logs, admin_users, admin_sessions, api_keys, api_request_logs, audit_logs, webhook_configs, simrs_config
+- **Migration**: 0001_initial_schema.sql, 0002_expand_sdm.sql, 0003_auth_cms_api.sql
+- **Seed**: seed.sql (70 pegawai, 30 departemen, 15 perangkat, 4 admin user, 2 webhook, 8 SIMRS config)
+- **Auth**: PBKDF2 password hash, SHA-256 token hash, HttpOnly cookie
 
 ## Deployment
 - **Platform**: Cloudflare Pages
 - **Status**: Development (Sandbox)
 - **Tech Stack**: Hono 4 + TypeScript + Cloudflare D1 + TailwindCSS CDN + Chart.js + Font Awesome + Day.js
-- **Last Updated**: 2026-02-24
+- **Last Updated**: 2026-02-27
 
 ## Fitur yang Belum Diimplementasi
 - [ ] Export laporan ke PDF/Excel
 - [ ] Notifikasi real-time (WebSocket/Push)
-- [ ] Integrasi langsung ke SIMRS (REST API bridge)
+- [ ] Integrasi langsung ke SIMRS (REST API bridge) - konfigurasi sudah konseptual
 - [ ] Face Recognition server/middleware (actual biometric processing)
-- [ ] Role-based access control (RBAC) untuk admin
 - [ ] Logbook PPDS elektronik
 - [ ] Dashboard Direksi/Manajemen (KPI summary)
 - [ ] Backup & restore database

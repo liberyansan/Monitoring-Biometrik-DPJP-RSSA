@@ -105,6 +105,9 @@ function progressRing(pct, color='rssa-500') {
     <span class="absolute text-xs font-bold">${pct}%</span></div>`;
 }
 
+// Auth state
+let currentUser = null;
+
 // Navigation
 const PAGES = {
   dashboard: ['Dashboard', 'Monitoring real-time seluruh SDM RSSA'],
@@ -119,16 +122,29 @@ const PAGES = {
   access: ['Log Akses Ruangan', 'Audit akses ruangan terbatas'],
   devices: ['Perangkat Biometrik', 'Status perangkat biometrik'],
   reports: ['Laporan & Analitik', 'Analisis kehadiran dan kinerja'],
+  cmsEmployees: ['Kelola Pegawai', 'CRUD data pegawai & import CSV'],
+  cmsDepts: ['Kelola Departemen', 'CRUD data departemen'],
+  cmsDevices: ['Kelola Perangkat', 'CRUD perangkat biometrik'],
+  cmsSchedules: ['Kelola Jadwal', 'CRUD jadwal DPJP, shift, rotasi'],
+  cmsUsers: ['User Admin', 'Manajemen user admin sistem'],
+  apiKeys: ['API Keys', 'Manajemen API Key perangkat biometrik'],
+  apiLogs: ['API Logs', 'Log request API dari perangkat'],
+  webhooks: ['Webhooks', 'Konfigurasi webhook & integrasi SIMRS'],
+  auditLogs: ['Audit Log', 'Riwayat perubahan data CMS'],
 };
 
 function showPage(page) {
+  // CMS/Admin pages require auth
+  const cmsPages = ['cmsEmployees','cmsDepts','cmsDevices','cmsSchedules','cmsUsers','apiKeys','apiLogs','webhooks','auditLogs'];
+  if (cmsPages.includes(page) && !currentUser) { window.location.href = '/login'; return; }
+
   document.querySelectorAll('.sidebar-link').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('pageTitle').textContent = PAGES[page]?.[0] || page;
   document.getElementById('pageSubtitle').textContent = PAGES[page]?.[1] || '';
   const ct = document.getElementById('content');
   ct.innerHTML = '<div class="flex items-center justify-center h-64"><i class="fas fa-spinner fa-spin text-3xl text-rssa-500"></i></div>';
   Object.values(charts).forEach(ch => { try { ch.destroy() } catch(e){} }); charts = {};
-  const loaders = { dashboard: loadDashboard, sdmOverview: loadSDMOverview, staffing: loadStaffing, dpjp: loadDPJP, pendidikan: loadPendidikan, keperawatan: loadKeperawatan, farmasi: loadFarmasi, attendance: loadAttendance, employees: loadEmployees, access: loadAccessLogs, devices: loadDevices, reports: loadReports };
+  const loaders = { dashboard: loadDashboard, sdmOverview: loadSDMOverview, staffing: loadStaffing, dpjp: loadDPJP, pendidikan: loadPendidikan, keperawatan: loadKeperawatan, farmasi: loadFarmasi, attendance: loadAttendance, employees: loadEmployees, access: loadAccessLogs, devices: loadDevices, reports: loadReports, cmsEmployees: loadCMSEmployees, cmsDepts: loadCMSDepts, cmsDevices: loadCMSDevices, cmsSchedules: loadCMSSchedules, cmsUsers: loadCMSUsers, apiKeys: loadAPIKeys, apiLogs: loadAPILogs, webhooks: loadWebhooks, auditLogs: loadAuditLogs };
   if (loaders[page]) loaders[page]();
 }
 
@@ -1076,5 +1092,949 @@ function tick() {
 }
 setInterval(tick, 1000); tick();
 
+// =====================================================
+// AUTH MANAGEMENT
+// =====================================================
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (r.ok) {
+      currentUser = await r.json();
+      updateUIForAuth();
+    } else {
+      currentUser = null;
+      updateUIForAuth();
+    }
+  } catch(e) { currentUser = null; updateUIForAuth(); }
+}
+
+function updateUIForAuth() {
+  const loginBtn = document.getElementById('loginBtn');
+  const userInfo = document.getElementById('userInfo');
+  const cmsMenu = document.getElementById('cmsMenu');
+  const adminMenu = document.getElementById('adminMenu');
+  
+  if (currentUser) {
+    if(loginBtn) loginBtn.classList.add('hidden');
+    if(userInfo) { userInfo.classList.remove('hidden'); }
+    document.getElementById('userName').textContent = currentUser.name;
+    document.getElementById('userRole').textContent = currentUser.roleLabel || currentUser.role;
+    document.getElementById('userAvatar').textContent = (currentUser.name||'A').charAt(0).toUpperCase();
+    
+    // Show CMS menu for admin_sdm, admin_dept, super_admin
+    if (['super_admin','admin_sdm'].includes(currentUser.role)) {
+      if(cmsMenu) cmsMenu.classList.remove('hidden');
+    } else if (currentUser.role === 'admin_dept') {
+      if(cmsMenu) cmsMenu.classList.remove('hidden');
+    }
+    // Show admin menu only for super_admin
+    if (currentUser.role === 'super_admin') {
+      if(adminMenu) adminMenu.classList.remove('hidden');
+    }
+  } else {
+    if(loginBtn) loginBtn.classList.remove('hidden');
+    if(userInfo) userInfo.classList.add('hidden');
+    if(cmsMenu) cmsMenu.classList.add('hidden');
+    if(adminMenu) adminMenu.classList.add('hidden');
+  }
+}
+
+function toggleUserMenu() {
+  document.getElementById('userMenu').classList.toggle('hidden');
+}
+
+async function doLogout() {
+  await fetch('/api/auth/logout', {method:'POST'});
+  currentUser = null;
+  localStorage.removeItem('auth_user');
+  updateUIForAuth();
+  showPage('dashboard');
+}
+
+// Helper for auth API calls
+async function apiPost(url, data) {
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  return r.json();
+}
+async function apiPut(url, data) {
+  const r = await fetch(url, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  return r.json();
+}
+async function apiDelete(url) {
+  const r = await fetch(url, {method:'DELETE'});
+  return r.json();
+}
+
+// =====================================================
+// CMS: EMPLOYEES (CRUD + Import)
+// =====================================================
+async function loadCMSEmployees() {
+  const [emps, depts] = await Promise.all([api('/api/employees'), api('/api/departments')]);
+  const ct = document.getElementById('content');
+  const catOpts = Object.entries(CAT_LABELS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  const deptOpts = depts.map(d=>`<option value="${d.id}">${d.name}</option>`).join('');
+  
+  ct.innerHTML = `<div class="fade-in">
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-2">
+        <input type="text" id="cmsEmpSearch" placeholder="Cari nama/NIP..." oninput="filterCMSEmps()" class="border rounded-lg px-3 py-1.5 text-sm outline-none w-64">
+        <select id="cmsEmpCat" onchange="filterCMSEmps()" class="border rounded-lg px-2 py-1.5 text-sm outline-none"><option value="">Semua Kategori</option>${catOpts}</select>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="showImportCSVModal()" class="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 flex items-center gap-1"><i class="fas fa-file-csv"></i> Import CSV</button>
+        <button onclick="showAddEmployeeModal()" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600 flex items-center gap-1"><i class="fas fa-plus"></i> Tambah Pegawai</button>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <div class="overflow-x-auto"><table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">NIP</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Nama</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Kategori</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Role</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Departemen</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400 uppercase">Biometrik</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400 uppercase">Aksi</th>
+      </tr></thead><tbody id="cmsEmpBody" class="divide-y divide-gray-50">${renderCMSEmpRows(emps)}</tbody></table></div>
+    </div>
+  </div>`;
+}
+
+function renderCMSEmpRows(emps) {
+  return emps.map(e => `<tr class="table-row">
+    <td class="px-3 py-2 text-xs font-mono text-gray-700">${e.nip}</td>
+    <td class="px-3 py-2"><div class="text-xs font-medium text-gray-800">${e.name}</div><div class="text-[9px] text-gray-400">${e.specialization||''}</div></td>
+    <td class="px-3 py-2">${catBadge(e.category)}</td>
+    <td class="px-3 py-2">${roleBadge(e.role)}</td>
+    <td class="px-3 py-2 text-[10px] text-gray-600">${e.department_name||'-'}</td>
+    <td class="px-3 py-2 text-center"><span class="${e.face_registered?'text-green-500':'text-gray-300'}"><i class="fas fa-smile"></i></span> <span class="${e.finger_registered?'text-green-500':'text-gray-300'}"><i class="fas fa-fingerprint"></i></span></td>
+    <td class="px-3 py-2 text-center">
+      <button onclick="showEditEmployeeModal(${e.id})" class="text-blue-500 hover:text-blue-700 text-xs mr-1" title="Edit"><i class="fas fa-edit"></i></button>
+      <button onclick="deleteEmployee(${e.id},'${e.name}')" class="text-red-500 hover:text-red-700 text-xs" title="Hapus"><i class="fas fa-trash"></i></button>
+    </td>
+  </tr>`).join('');
+}
+
+async function filterCMSEmps() {
+  const s=document.getElementById('cmsEmpSearch').value, cat=document.getElementById('cmsEmpCat').value;
+  let url='/api/employees?';
+  if(s) url+=`search=${encodeURIComponent(s)}&`;
+  if(cat) url+=`category=${cat}&`;
+  const data = await api(url);
+  document.getElementById('cmsEmpBody').innerHTML = renderCMSEmpRows(data);
+}
+
+function showAddEmployeeModal() {
+  showEmployeeFormModal(null);
+}
+
+async function showEditEmployeeModal(id) {
+  const emp = await api(`/api/employees/${id}`);
+  showEmployeeFormModal(emp);
+}
+
+async function showEmployeeFormModal(emp) {
+  const depts = await api('/api/departments');
+  const isEdit = !!emp;
+  const modal = document.getElementById('modal');
+  const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  
+  const catOpts = Object.entries(CAT_LABELS).map(([k,v])=>`<option value="${k}" ${emp?.category===k?'selected':''}>${v}</option>`).join('');
+  const deptOpts = depts.map(d=>`<option value="${d.id}" ${emp?.department_id==d.id?'selected':''}>${d.name}</option>`).join('');
+  const roleOpts = ['dpjp','dokter_umum','dokter_gigi','ppds','fellow','co_ass','perawat','bidan','apoteker','ttk','radiografer','analis_lab','fisioterapis','ahli_gizi','perekam_medis','direksi','staff_admin','staff_it','security','driver','teknisi','cssd','cleaning','laundry'].map(r=>`<option value="${r}" ${emp?.role===r?'selected':''}>${r.replace(/_/g,' ')}</option>`).join('');
+  const empTypeOpts = ['pns','pppk','kontrak','outsource','mitra'].map(t=>`<option value="${t}" ${emp?.employment_type===t?'selected':''}>${(EMP_TYPE_LABELS[t]||t)}</option>`).join('');
+  
+  mc.innerHTML = `<div class="p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-base font-bold text-gray-800"><i class="fas fa-${isEdit?'edit':'plus'} text-rssa-500 mr-2"></i>${isEdit?'Edit':'Tambah'} Pegawai</h3>
+      <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-lg"></i></button>
+    </div>
+    <form id="empForm" onsubmit="saveEmployee(event,${emp?.id||'null'})">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">NIP *</label><input type="text" name="nip" value="${emp?.nip||''}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-rssa-500"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Nama *</label><input type="text" name="name" value="${emp?.name||''}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-rssa-500"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Kategori *</label><select name="category" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${catOpts}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Role *</label><select name="role" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${roleOpts}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Departemen</label><select name="department_id" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"><option value="">- Pilih -</option>${deptOpts}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Spesialisasi</label><input type="text" name="specialization" value="${emp?.specialization||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Sub-Role</label><input type="text" name="sub_role" value="${emp?.sub_role||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Status Kepegawaian</label><select name="employment_type" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${empTypeOpts}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Phone</label><input type="text" name="phone" value="${emp?.phone||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">SIP/STR</label><input type="text" name="sip_str" value="${emp?.sip_str||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Biometric ID</label><input type="text" name="biometric_id" value="${emp?.biometric_id||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Prioritas</label><select name="priority_level" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"><option value="1" ${emp?.priority_level==1?'selected':''}>P1 - Sangat Tinggi</option><option value="2" ${emp?.priority_level==2?'selected':''}>P2 - Tinggi</option><option value="3" ${!emp||emp?.priority_level==3?'selected':''}>P3 - Sedang</option><option value="4" ${emp?.priority_level==4?'selected':''}>P4 - Rendah</option></select></div>
+      </div>
+      <div id="empFormError" class="hidden mt-3 p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700"></div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Batal</button>
+        <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg hover:bg-rssa-600"><i class="fas fa-save mr-1"></i>${isEdit?'Update':'Simpan'}</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function saveEmployee(e, id) {
+  e.preventDefault();
+  const form = document.getElementById('empForm');
+  const data = Object.fromEntries(new FormData(form));
+  if(data.department_id) data.department_id = parseInt(data.department_id);
+  if(data.priority_level) data.priority_level = parseInt(data.priority_level);
+  try {
+    const r = id ? await apiPut(`/api/cms/employees/${id}`, data) : await apiPost('/api/cms/employees', data);
+    if(r.success) { closeModal(); loadCMSEmployees(); } 
+    else { document.getElementById('empFormError').classList.remove('hidden'); document.getElementById('empFormError').textContent = r.error || 'Gagal menyimpan'; }
+  } catch(ex) { document.getElementById('empFormError').classList.remove('hidden'); document.getElementById('empFormError').textContent = 'Error: '+ex.message; }
+}
+
+async function deleteEmployee(id, name) {
+  if(!confirm(`Hapus pegawai "${name}"? (soft delete)`)) return;
+  const r = await apiDelete(`/api/cms/employees/${id}`);
+  if(r.success) loadCMSEmployees();
+  else alert(r.error || 'Gagal menghapus');
+}
+
+function showImportCSVModal() {
+  const modal = document.getElementById('modal');
+  const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  mc.innerHTML = `<div class="p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-base font-bold text-gray-800"><i class="fas fa-file-csv text-green-600 mr-2"></i>Import CSV Pegawai</h3>
+      <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-lg"></i></button>
+    </div>
+    <div class="mb-3 p-3 bg-blue-50 rounded-lg text-xs text-blue-700">
+      <p class="font-semibold mb-1"><i class="fas fa-info-circle mr-1"></i>Format CSV:</p>
+      <p>Header: nip, name, role, category, sub_role, specialization, department_id, phone, employment_type, priority_level, sip_str, biometric_id</p>
+      <p class="mt-1">Contoh baris: 199001011001,dr. Test,dpjp,tenaga_medis,dpjp_konsultan,Penyakit Dalam,5,08123456789,pns,1,SIP-001,BIO-999</p>
+    </div>
+    <textarea id="csvInput" rows="10" class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-rssa-500" placeholder="Paste CSV data di sini (dengan header)..."></textarea>
+    <div id="csvResult" class="hidden mt-3 p-2 rounded-lg text-xs"></div>
+    <div class="flex justify-end gap-2 mt-3">
+      <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Batal</button>
+      <button onclick="doImportCSV()" class="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700"><i class="fas fa-upload mr-1"></i>Import</button>
+    </div>
+  </div>`;
+}
+
+async function doImportCSV() {
+  const text = document.getElementById('csvInput').value.trim();
+  if(!text) return;
+  const lines = text.split('\n').map(l=>l.trim()).filter(l=>l);
+  if(lines.length < 2) { alert('Minimal 2 baris (header + data)'); return; }
+  const headers = lines[0].split(',').map(h=>h.trim());
+  const csvData = [];
+  for(let i=1; i<lines.length; i++) {
+    const vals = lines[i].split(',').map(v=>v.trim());
+    const row = {};
+    headers.forEach((h,j) => { if(vals[j]) row[h] = vals[j]; });
+    if(row.department_id) row.department_id = parseInt(row.department_id);
+    if(row.priority_level) row.priority_level = parseInt(row.priority_level);
+    csvData.push(row);
+  }
+  const r = await apiPost('/api/cms/employees/import', {csvData});
+  const el = document.getElementById('csvResult');
+  el.classList.remove('hidden');
+  if(r.success) {
+    el.className = 'mt-3 p-2 rounded-lg text-xs bg-green-50 text-green-700';
+    el.innerHTML = `<i class="fas fa-check-circle mr-1"></i>Berhasil import ${r.imported}/${r.total} pegawai.${r.errors?.length?'<br>Errors: '+r.errors.join('<br>'):''}`;
+  } else {
+    el.className = 'mt-3 p-2 rounded-lg text-xs bg-red-50 text-red-700';
+    el.innerHTML = `<i class="fas fa-times-circle mr-1"></i>${r.error||'Gagal import'}`;
+  }
+}
+
+// =====================================================
+// CMS: DEPARTMENTS
+// =====================================================
+async function loadCMSDepts() {
+  const depts = await api('/api/departments');
+  const ct = document.getElementById('content');
+  ct.innerHTML = `<div class="fade-in">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="font-semibold text-gray-700 text-sm">${depts.length} departemen</h3>
+      <button onclick="showDeptFormModal(null)" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600 flex items-center gap-1"><i class="fas fa-plus"></i> Tambah Departemen</button>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Kode</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Nama</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Tipe</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400 uppercase">Kritis</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Lokasi</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400 uppercase">Pegawai</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400 uppercase">Aksi</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${depts.map(d=>`<tr class="table-row">
+          <td class="px-3 py-2 text-xs font-mono font-medium text-gray-800">${d.code}</td>
+          <td class="px-3 py-2 text-xs text-gray-800">${d.name}</td>
+          <td class="px-3 py-2"><span class="badge bg-gray-100 text-gray-600">${d.type}</span></td>
+          <td class="px-3 py-2 text-center">${d.is_critical?'<i class="fas fa-exclamation-circle text-red-500"></i>':'-'}</td>
+          <td class="px-3 py-2 text-[10px] text-gray-500">${d.floor||''} ${d.building||''}</td>
+          <td class="px-3 py-2 text-center text-xs font-medium">${d.employee_count||0}</td>
+          <td class="px-3 py-2 text-center"><button onclick="showDeptFormModal(${d.id})" class="text-blue-500 hover:text-blue-700 text-xs" title="Edit"><i class="fas fa-edit"></i></button></td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>
+  </div>`;
+}
+
+async function showDeptFormModal(id) {
+  let dept = null;
+  if(id) { const depts = await api('/api/departments'); dept = depts.find(d=>d.id===id); }
+  const modal = document.getElementById('modal');
+  const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  mc.innerHTML = `<div class="p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-base font-bold text-gray-800"><i class="fas fa-building text-rssa-500 mr-2"></i>${dept?'Edit':'Tambah'} Departemen</h3>
+      <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-lg"></i></button>
+    </div>
+    <form id="deptForm" onsubmit="saveDept(event,${id||'null'})">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Kode *</label><input type="text" name="code" value="${dept?.code||''}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Nama *</label><input type="text" name="name" value="${dept?.name||''}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Tipe</label><select name="type" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${['unit','poli','instalasi','ruangan'].map(t=>`<option value="${t}" ${dept?.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
+        <div class="flex items-center gap-2 pt-5"><input type="checkbox" name="is_critical" ${dept?.is_critical?'checked':''} class="rounded"><label class="text-xs text-gray-600">Area Kritis</label></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Lantai</label><input type="text" name="floor" value="${dept?.floor||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Gedung</label><input type="text" name="building" value="${dept?.building||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Batal</button>
+        <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg hover:bg-rssa-600"><i class="fas fa-save mr-1"></i>Simpan</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function saveDept(e, id) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(document.getElementById('deptForm')));
+  data.is_critical = data.is_critical === 'on' ? 1 : 0;
+  const r = id ? await apiPut(`/api/cms/departments/${id}`, data) : await apiPost('/api/cms/departments', data);
+  if(r.success) { closeModal(); loadCMSDepts(); } else alert(r.error||'Gagal');
+}
+
+// =====================================================
+// CMS: DEVICES
+// =====================================================
+async function loadCMSDevices() {
+  const devs = await api('/api/devices');
+  const ct = document.getElementById('content');
+  ct.innerHTML = `<div class="fade-in">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="font-semibold text-gray-700 text-sm">${devs.length} perangkat</h3>
+      <button onclick="showDeviceFormModal(null)" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600 flex items-center gap-1"><i class="fas fa-plus"></i> Tambah Perangkat</button>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Kode</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Nama</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Tipe</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Lokasi</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">IP</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400 uppercase">Status</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400 uppercase">Aksi</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${devs.map(d=>`<tr class="table-row">
+          <td class="px-3 py-2 text-xs font-mono">${d.device_code}</td>
+          <td class="px-3 py-2 text-xs text-gray-800">${d.name}</td>
+          <td class="px-3 py-2"><span class="badge ${d.type==='face_recognition'?'bg-blue-100 text-blue-700':d.type==='fingerprint'?'bg-purple-100 text-purple-700':'bg-cyan-100 text-cyan-700'}">${d.type}</span></td>
+          <td class="px-3 py-2 text-[10px] text-gray-600">${d.location}</td>
+          <td class="px-3 py-2 text-[10px] font-mono text-gray-500">${d.ip_address||'-'}</td>
+          <td class="px-3 py-2">${statusBadge(d.status)}</td>
+          <td class="px-3 py-2 text-center"><button onclick="showDeviceFormModal(${d.id})" class="text-blue-500 hover:text-blue-700 text-xs"><i class="fas fa-edit"></i></button></td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>
+  </div>`;
+}
+
+async function showDeviceFormModal(id) {
+  let dev = null;
+  if(id) { const devs = await api('/api/devices'); dev = devs.find(d=>d.id===id); }
+  const modal = document.getElementById('modal'); const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  mc.innerHTML = `<div class="p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-base font-bold text-gray-800"><i class="fas fa-tablet-alt text-rssa-500 mr-2"></i>${dev?'Edit':'Tambah'} Perangkat</h3>
+      <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-lg"></i></button>
+    </div>
+    <form id="devForm" onsubmit="saveDevice(event,${id||'null'})">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Kode Device *</label><input type="text" name="device_code" value="${dev?.device_code||''}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Nama *</label><input type="text" name="name" value="${dev?.name||''}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Tipe</label><select name="type" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${['face_recognition','fingerprint','combo'].map(t=>`<option value="${t}" ${dev?.type===t?'selected':''}>${t}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Lokasi *</label><input type="text" name="location" value="${dev?.location||''}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Tipe Lokasi</label><select name="location_type" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${['lobby','unit','icu','ok','farmasi','other'].map(t=>`<option value="${t}" ${dev?.location_type===t?'selected':''}>${t}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">IP Address</label><input type="text" name="ip_address" value="${dev?.ip_address||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Status</label><select name="status" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${['active','inactive','maintenance'].map(t=>`<option value="${t}" ${dev?.status===t?'selected':''}>${t}</option>`).join('')}</select></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Batal</button>
+        <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg hover:bg-rssa-600"><i class="fas fa-save mr-1"></i>Simpan</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function saveDevice(e, id) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(document.getElementById('devForm')));
+  const r = id ? await apiPut(`/api/cms/devices/${id}`, data) : await apiPost('/api/cms/devices', data);
+  if(r.success) { closeModal(); loadCMSDevices(); } else alert(r.error||'Gagal');
+}
+
+// =====================================================
+// CMS: SCHEDULES (DPJP, Shift, Rotation)
+// =====================================================
+async function loadCMSSchedules() {
+  const ct = document.getElementById('content');
+  ct.innerHTML = `<div class="fade-in">
+    <div class="flex gap-2 border-b mb-4">
+      <button class="tab-btn active px-4 py-2 text-sm" onclick="showSchedTab(this,'dpjpSched')">Jadwal DPJP</button>
+      <button class="tab-btn px-4 py-2 text-sm text-gray-500" onclick="showSchedTab(this,'shiftSched')">Shift Perawat</button>
+      <button class="tab-btn px-4 py-2 text-sm text-gray-500" onclick="showSchedTab(this,'ppdsRot')">Rotasi PPDS</button>
+    </div>
+    <div id="sched-dpjpSched"></div>
+    <div id="sched-shiftSched" class="hidden"></div>
+    <div id="sched-ppdsRot" class="hidden"></div>
+  </div>`;
+  loadDPJPSchedulesCMS();
+}
+
+function showSchedTab(btn, tabId) {
+  btn.parentElement.querySelectorAll('.tab-btn').forEach(b=>{b.classList.remove('active');b.classList.add('text-gray-500')});
+  btn.classList.add('active'); btn.classList.remove('text-gray-500');
+  document.querySelectorAll('[id^="sched-"]').forEach(t=>t.classList.add('hidden'));
+  document.getElementById(`sched-${tabId}`).classList.remove('hidden');
+  if(tabId==='dpjpSched') loadDPJPSchedulesCMS();
+  if(tabId==='shiftSched') loadShiftSchedulesCMS();
+  if(tabId==='ppdsRot') loadPPDSRotationsCMS();
+}
+
+async function loadDPJPSchedulesCMS() {
+  const today = new Date().toISOString().split('T')[0];
+  const data = await api(`/api/dpjp/monitoring?date=${today}`);
+  document.getElementById('sched-dpjpSched').innerHTML = `
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-sm text-gray-500">${data.schedules.length} jadwal hari ini</span>
+      <button onclick="showDPJPSchedFormModal()" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600"><i class="fas fa-plus mr-1"></i>Tambah Jadwal DPJP</button>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Dokter</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Aktivitas</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Unit</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Jadwal</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Status</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${data.schedules.map(s=>`<tr class="table-row">
+          <td class="px-3 py-2 text-xs">${s.doctor_name||'-'}</td>
+          <td class="px-3 py-2"><span class="badge bg-indigo-50 text-indigo-700">${actLabel(s.activity_type)}</span></td>
+          <td class="px-3 py-2 text-[10px] text-gray-600">${s.department_name||'-'}</td>
+          <td class="px-3 py-2 text-xs font-mono">${s.start_time}-${s.end_time}</td>
+          <td class="px-3 py-2">${statusBadge(s.status)}</td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`;
+}
+
+async function showDPJPSchedFormModal() {
+  const [dpjps, depts] = await Promise.all([api('/api/employees?role=dpjp'), api('/api/departments')]);
+  const modal = document.getElementById('modal'); const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  mc.innerHTML = `<div class="p-5">
+    <h3 class="text-base font-bold text-gray-800 mb-4"><i class="fas fa-calendar-plus text-rssa-500 mr-2"></i>Tambah Jadwal DPJP</h3>
+    <form onsubmit="saveDPJPSched(event)">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">DPJP *</label><select name="employee_id" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${dpjps.map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Tanggal *</label><input type="date" name="schedule_date" value="${new Date().toISOString().split('T')[0]}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Departemen</label><select name="department_id" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${depts.map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Aktivitas</label><select name="activity_type" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${['visite','operasi','poliklinik','tindakan','konsul','jaga'].map(a=>`<option value="${a}">${actLabel(a)}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Shift</label><select name="shift" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"><option value="pagi">Pagi</option><option value="siang">Siang</option><option value="malam">Malam</option></select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Jam Mulai *</label><input type="time" name="start_time" value="07:00" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Jam Selesai *</label><input type="time" name="end_time" value="14:00" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Jumlah Pasien</label><input type="number" name="patient_count" value="0" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 rounded-lg">Batal</button>
+        <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg"><i class="fas fa-save mr-1"></i>Simpan</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function saveDPJPSched(e) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  data.employee_id = parseInt(data.employee_id); data.department_id = parseInt(data.department_id);
+  data.patient_count = parseInt(data.patient_count)||0;
+  const r = await apiPost('/api/cms/dpjp-schedules', data);
+  if(r.success){closeModal();loadDPJPSchedulesCMS()} else alert(r.error||'Gagal');
+}
+
+async function loadShiftSchedulesCMS() {
+  const shifts = await api('/api/shifts');
+  document.getElementById('sched-shiftSched').innerHTML = `
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-sm text-gray-500">${shifts.length} shift hari ini</span>
+      <button onclick="showShiftFormModal()" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600"><i class="fas fa-plus mr-1"></i>Tambah Shift</button>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Nama</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Unit</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Shift</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Area</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Status</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${shifts.map(s=>`<tr class="table-row">
+          <td class="px-3 py-2 text-xs">${s.employee_name} ${s.is_leader?'<i class="fas fa-star text-amber-400 text-[9px]"></i>':''}</td>
+          <td class="px-3 py-2 text-[10px]">${s.department_name||'-'}</td>
+          <td class="px-3 py-2 text-xs font-mono">${s.shift_type} (${s.start_time}-${s.end_time})</td>
+          <td class="px-3 py-2 text-[10px]">${s.area||'-'}</td>
+          <td class="px-3 py-2">${statusBadge(s.status)}</td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`;
+}
+
+async function showShiftFormModal() {
+  const [emps, depts] = await Promise.all([api('/api/employees'), api('/api/departments')]);
+  const modal = document.getElementById('modal'); const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  mc.innerHTML = `<div class="p-5">
+    <h3 class="text-base font-bold text-gray-800 mb-4"><i class="fas fa-calendar-plus text-rssa-500 mr-2"></i>Tambah Jadwal Shift</h3>
+    <form onsubmit="saveShift(event)">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Pegawai *</label><select name="employee_id" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${emps.map(e=>`<option value="${e.id}">${e.name}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Tanggal *</label><input type="date" name="schedule_date" value="${new Date().toISOString().split('T')[0]}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Departemen</label><select name="department_id" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${depts.map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Shift</label><select name="shift_type" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"><option value="pagi">Pagi</option><option value="siang">Siang</option><option value="malam">Malam</option></select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Jam Mulai</label><input type="time" name="start_time" value="07:00" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Jam Selesai</label><input type="time" name="end_time" value="14:00" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Area</label><input type="text" name="area" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none" placeholder="e.g. ICU Bed 1-4"></div>
+        <div class="flex items-center gap-2 pt-5"><input type="checkbox" name="is_leader" class="rounded"><label class="text-xs text-gray-600">PJ Shift</label></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 rounded-lg">Batal</button>
+        <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg"><i class="fas fa-save mr-1"></i>Simpan</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function saveShift(e) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  data.employee_id = parseInt(data.employee_id); data.department_id = parseInt(data.department_id);
+  data.is_leader = data.is_leader === 'on' ? 1 : 0;
+  const r = await apiPost('/api/cms/shift-schedules', data);
+  if(r.success){closeModal();loadShiftSchedulesCMS()} else alert(r.error||'Gagal');
+}
+
+async function loadPPDSRotationsCMS() {
+  const data = await api('/api/pendidikan/monitoring');
+  const active = data.filter(d=>d.rotation_status==='active');
+  document.getElementById('sched-ppdsRot').innerHTML = `
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-sm text-gray-500">${active.length} rotasi aktif</span>
+      <button onclick="showRotationFormModal()" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600"><i class="fas fa-plus mr-1"></i>Tambah Rotasi</button>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Nama</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Spesialisasi</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Rotasi</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Pembimbing</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Periode</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Tahap</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${data.map(p=>`<tr class="table-row">
+          <td class="px-3 py-2 text-xs font-medium">${p.name}</td>
+          <td class="px-3 py-2 text-[10px]">${p.specialization||'-'}</td>
+          <td class="px-3 py-2 text-[10px]">${p.rotation_department||'-'}</td>
+          <td class="px-3 py-2 text-[10px]">${p.supervisor_name||'-'}</td>
+          <td class="px-3 py-2 text-[10px] font-mono">${fmtDate(p.start_date)} - ${fmtDate(p.end_date)}</td>
+          <td class="px-3 py-2"><span class="badge bg-blue-100 text-blue-700">${(p.stage||'').toUpperCase()}</span></td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`;
+}
+
+async function showRotationFormModal() {
+  const [ppds, dpjps, depts] = await Promise.all([api('/api/employees?category=tenaga_pendidikan'), api('/api/employees?role=dpjp'), api('/api/departments')]);
+  const modal = document.getElementById('modal'); const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  mc.innerHTML = `<div class="p-5">
+    <h3 class="text-base font-bold text-gray-800 mb-4"><i class="fas fa-sync-alt text-rssa-500 mr-2"></i>Tambah Rotasi PPDS</h3>
+    <form onsubmit="saveRotation(event)">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">PPDS/Fellow *</label><select name="employee_id" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${ppds.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Departemen *</label><select name="department_id" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${depts.map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Pembimbing (DPJP)</label><select name="supervisor_id" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"><option value="">- Pilih -</option>${dpjps.map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Tahap</label><select name="stage" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"><option value="junior">Junior</option><option value="senior">Senior</option><option value="chief">Chief</option><option value="fellow">Fellow</option></select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Mulai *</label><input type="date" name="start_date" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Selesai *</label><input type="date" name="end_date" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 rounded-lg">Batal</button>
+        <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg"><i class="fas fa-save mr-1"></i>Simpan</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function saveRotation(e) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  data.employee_id = parseInt(data.employee_id); data.department_id = parseInt(data.department_id);
+  if(data.supervisor_id) data.supervisor_id = parseInt(data.supervisor_id);
+  const r = await apiPost('/api/cms/ppds-rotations', data);
+  if(r.success){closeModal();loadPPDSRotationsCMS()} else alert(r.error||'Gagal');
+}
+
+// =====================================================
+// ADMIN: USER MANAGEMENT
+// =====================================================
+async function loadCMSUsers() {
+  const users = await api('/api/cms/users');
+  const ct = document.getElementById('content');
+  const roleLbls = { super_admin:'Super Admin', admin_sdm:'Admin SDM', admin_dept:'Admin Dept', viewer:'Viewer' };
+  ct.innerHTML = `<div class="fade-in">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="font-semibold text-gray-700 text-sm">${users.length} user admin</h3>
+      <button onclick="showUserFormModal(null)" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600"><i class="fas fa-plus mr-1"></i>Tambah User</button>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Username</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Nama</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Role</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Status</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Login Terakhir</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400">Aksi</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${users.map(u=>`<tr class="table-row">
+          <td class="px-3 py-2 text-xs font-mono font-medium">${u.username}</td>
+          <td class="px-3 py-2 text-xs text-gray-800">${u.name}</td>
+          <td class="px-3 py-2"><span class="badge ${u.role==='super_admin'?'bg-red-100 text-red-700':u.role==='admin_sdm'?'bg-blue-100 text-blue-700':u.role==='admin_dept'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-600'}">${roleLbls[u.role]||u.role}</span></td>
+          <td class="px-3 py-2">${u.is_active?'<span class="badge bg-green-100 text-green-700">Aktif</span>':'<span class="badge bg-red-100 text-red-700">Nonaktif</span>'}</td>
+          <td class="px-3 py-2 text-[10px] text-gray-500">${u.last_login?fmtDT(u.last_login):'Belum pernah'}</td>
+          <td class="px-3 py-2 text-center"><button onclick="showUserFormModal(${u.id})" class="text-blue-500 hover:text-blue-700 text-xs"><i class="fas fa-edit"></i></button></td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>
+  </div>`;
+}
+
+async function showUserFormModal(id) {
+  let user = null;
+  if(id) { const users = await api('/api/cms/users'); user = users.find(u=>u.id===id); }
+  const modal = document.getElementById('modal'); const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  const depts = await api('/api/departments');
+  mc.innerHTML = `<div class="p-5">
+    <h3 class="text-base font-bold text-gray-800 mb-4"><i class="fas fa-user-shield text-rssa-500 mr-2"></i>${user?'Edit':'Tambah'} User Admin</h3>
+    <form onsubmit="saveUser(event,${id||'null'})">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Username *</label><input type="text" name="username" value="${user?.username||''}" ${user?'readonly':''} required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none ${user?'bg-gray-100':''}"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Password ${user?'(kosongkan jika tidak diubah)':'*'}</label><input type="password" name="password" ${user?'':'required'} class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Nama *</label><input type="text" name="name" value="${user?.name||''}" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Role *</label><select name="role" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none">${['super_admin','admin_sdm','admin_dept','viewer'].map(r=>`<option value="${r}" ${user?.role===r?'selected':''}>${r.replace(/_/g,' ').toUpperCase()}</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Departemen</label><select name="department_id" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"><option value="">- Pilih -</option>${depts.map(d=>`<option value="${d.id}" ${user?.department_id==d.id?'selected':''}>${d.name}</option>`).join('')}</select></div>
+        ${user?`<div class="flex items-center gap-2 pt-5"><input type="checkbox" name="is_active" ${user.is_active?'checked':''} class="rounded"><label class="text-xs text-gray-600">Aktif</label></div>`:''}
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 rounded-lg">Batal</button>
+        <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg"><i class="fas fa-save mr-1"></i>Simpan</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function saveUser(e, id) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  if(!data.password) delete data.password;
+  if(data.department_id) data.department_id = parseInt(data.department_id); else data.department_id = null;
+  if(id && data.is_active !== undefined) data.is_active = data.is_active === 'on' ? 1 : 0;
+  const r = id ? await apiPut(`/api/cms/users/${id}`, data) : await apiPost('/api/cms/users', data);
+  if(r.success){closeModal();loadCMSUsers()} else alert(r.error||'Gagal');
+}
+
+// =====================================================
+// ADMIN: API KEYS
+// =====================================================
+async function loadAPIKeys() {
+  const keys = await api('/api/cms/api-keys');
+  const ct = document.getElementById('content');
+  ct.innerHTML = `<div class="fade-in">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h3 class="font-semibold text-gray-700 text-sm">${keys.length} API key</h3>
+        <p class="text-[10px] text-gray-400">Satu key per perangkat biometrik</p>
+      </div>
+      <button onclick="showAPIKeyFormModal()" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600"><i class="fas fa-plus mr-1"></i>Generate API Key</button>
+    </div>
+    ${keys.length === 0 ? '<div class="bg-gray-50 rounded-xl p-8 text-center text-gray-400"><i class="fas fa-key text-3xl mb-2"></i><p class="text-sm">Belum ada API key. Generate key untuk perangkat biometrik.</p></div>' : `
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Nama</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Prefix</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Perangkat</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400">Requests</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Terakhir</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Status</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400">Aksi</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${keys.map(k=>`<tr class="table-row">
+          <td class="px-3 py-2"><div class="text-xs font-medium text-gray-800">${k.name}</div><div class="text-[9px] text-gray-400">${k.description||''}</div></td>
+          <td class="px-3 py-2 text-xs font-mono text-gray-500">${k.key_prefix}...</td>
+          <td class="px-3 py-2 text-[10px]">${k.device_name?`${k.device_name} (${k.device_code})`:'-'}</td>
+          <td class="px-3 py-2 text-center text-xs font-medium">${k.total_requests||0}</td>
+          <td class="px-3 py-2 text-[10px] text-gray-500">${k.last_used?fmtDT(k.last_used):'Belum'}</td>
+          <td class="px-3 py-2">${k.is_active?'<span class="badge bg-green-100 text-green-700">Aktif</span>':'<span class="badge bg-red-100 text-red-700">Revoked</span>'}</td>
+          <td class="px-3 py-2 text-center">${k.is_active?`<button onclick="revokeAPIKey(${k.id},'${k.name}')" class="text-red-500 hover:text-red-700 text-xs" title="Revoke"><i class="fas fa-ban"></i></button>`:''}</td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`}
+    <!-- API Documentation -->
+    <div class="mt-5 bg-white rounded-xl border p-4">
+      <h3 class="font-semibold text-gray-800 text-sm mb-3"><i class="fas fa-book text-rssa-500 mr-1"></i>Dokumentasi API</h3>
+      <div class="bg-gray-900 rounded-lg p-4 text-xs font-mono text-green-400 overflow-x-auto">
+        <div class="text-gray-500"># Kirim data kehadiran dari perangkat biometrik</div>
+        <div class="text-yellow-400 mt-1">POST /api/v1/attendance</div>
+        <div class="text-gray-500 mt-2">Headers:</div>
+        <div>&nbsp; X-API-Key: rssa_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div>
+        <div>&nbsp; Content-Type: application/json</div>
+        <div class="text-gray-500 mt-2">Body:</div>
+        <div class="text-white">{</div>
+        <div>&nbsp; "biometric_id": "BIO-001",</div>
+        <div>&nbsp; "device_code": "FR-LOBBY-01",</div>
+        <div>&nbsp; "method": "face",</div>
+        <div>&nbsp; "confidence_score": 98.5,</div>
+        <div>&nbsp; "scan_type": "clock_in"</div>
+        <div class="text-white">}</div>
+        <div class="text-gray-500 mt-2">Response (200):</div>
+        <div class="text-white">{"success":true, "id":123, "employee_name":"dr. Ahmad..."}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function showAPIKeyFormModal() {
+  const devs = await api('/api/devices');
+  const modal = document.getElementById('modal'); const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  mc.innerHTML = `<div class="p-5">
+    <h3 class="text-base font-bold text-gray-800 mb-4"><i class="fas fa-key text-rssa-500 mr-2"></i>Generate API Key</h3>
+    <form onsubmit="generateAPIKey(event)">
+      <div class="grid grid-cols-1 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Nama Key *</label><input type="text" name="name" required placeholder="e.g. FR Lobby Utama" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Deskripsi</label><input type="text" name="description" placeholder="Deskripsi penggunaan" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Perangkat (opsional)</label><select name="device_id" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"><option value="">- Tidak dikaitkan -</option>${devs.map(d=>`<option value="${d.id}">${d.name} (${d.device_code})</option>`).join('')}</select></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Rate Limit (req/menit)</label><input type="number" name="rate_limit" value="60" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">IP Whitelist (opsional)</label><input type="text" name="ip_whitelist" placeholder="e.g. 192.168.1.0/24" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+      </div>
+      <div id="generatedKey" class="hidden mt-3"></div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 rounded-lg">Tutup</button>
+        <button type="submit" id="genKeyBtn" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg"><i class="fas fa-key mr-1"></i>Generate</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function generateAPIKey(e) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  if(data.device_id) data.device_id = parseInt(data.device_id); else delete data.device_id;
+  if(data.rate_limit) data.rate_limit = parseInt(data.rate_limit);
+  const r = await apiPost('/api/cms/api-keys', data);
+  if(r.success) {
+    document.getElementById('genKeyBtn').classList.add('hidden');
+    document.getElementById('generatedKey').classList.remove('hidden');
+    document.getElementById('generatedKey').innerHTML = `
+      <div class="p-3 bg-green-50 border border-green-200 rounded-lg">
+        <p class="text-xs font-semibold text-green-800 mb-1"><i class="fas fa-check-circle mr-1"></i>API Key berhasil digenerate!</p>
+        <p class="text-[10px] text-red-600 mb-2"><i class="fas fa-exclamation-triangle mr-1"></i>Simpan key ini. Tidak akan ditampilkan lagi!</p>
+        <div class="bg-white border rounded-lg p-2 font-mono text-xs text-gray-800 break-all select-all">${r.apiKey}</div>
+      </div>`;
+  } else alert(r.error||'Gagal');
+}
+
+async function revokeAPIKey(id, name) {
+  if(!confirm(`Revoke API key "${name}"?`)) return;
+  const r = await apiDelete(`/api/cms/api-keys/${id}`);
+  if(r.success) loadAPIKeys();
+}
+
+// =====================================================
+// ADMIN: API LOGS
+// =====================================================
+async function loadAPILogs() {
+  const logs = await api('/api/cms/api-logs?limit=100');
+  const ct = document.getElementById('content');
+  ct.innerHTML = `<div class="fade-in">
+    <h3 class="font-semibold text-gray-700 text-sm mb-3">${logs.length} log terakhir</h3>
+    ${logs.length === 0 ? '<div class="bg-gray-50 rounded-xl p-8 text-center text-gray-400"><i class="fas fa-stream text-3xl mb-2"></i><p class="text-sm">Belum ada request API.</p></div>' : `
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Waktu</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Key</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Endpoint</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400">Status</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">IP</th>
+        <th class="px-3 py-2 text-center text-[10px] font-semibold text-gray-400">Waktu (ms)</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Error</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${logs.map(l=>`<tr class="table-row ${l.status_code>=400?'bg-red-50/50':''}">
+          <td class="px-3 py-2 text-[10px] font-mono text-gray-500">${fmtDT(l.created_at)}</td>
+          <td class="px-3 py-2 text-[10px]">${l.key_name||'-'} <span class="text-gray-400">${l.key_prefix||''}</span></td>
+          <td class="px-3 py-2 text-xs font-mono">${l.method} ${l.endpoint}</td>
+          <td class="px-3 py-2 text-center"><span class="badge ${l.status_code<300?'bg-green-100 text-green-700':l.status_code<500?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}">${l.status_code}</span></td>
+          <td class="px-3 py-2 text-[10px] font-mono text-gray-500">${l.ip_address||'-'}</td>
+          <td class="px-3 py-2 text-center text-[10px] text-gray-500">${l.response_time_ms||'-'}</td>
+          <td class="px-3 py-2 text-[10px] text-red-600 truncate max-w-[150px]">${l.error_message||''}</td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`}
+  </div>`;
+}
+
+// =====================================================
+// ADMIN: WEBHOOKS
+// =====================================================
+async function loadWebhooks() {
+  const [hooks, simrsConf] = await Promise.all([api('/api/cms/webhooks'), api('/api/cms/simrs-config')]);
+  const ct = document.getElementById('content');
+  const confMap = {}; simrsConf.forEach(c => confMap[c.config_key] = c.config_value);
+  
+  ct.innerHTML = `<div class="fade-in">
+    <div class="flex gap-2 border-b mb-4">
+      <button class="tab-btn active px-4 py-2 text-sm" onclick="showWebhookTab(this,'webhookList')">Webhooks</button>
+      <button class="tab-btn px-4 py-2 text-sm text-gray-500" onclick="showWebhookTab(this,'simrsConfig')">Integrasi SIMRS</button>
+    </div>
+    <div id="wh-webhookList">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-sm text-gray-500">${hooks.length} webhook</span>
+        <button onclick="showWebhookFormModal()" class="px-3 py-1.5 bg-rssa-500 text-white text-xs rounded-lg hover:bg-rssa-600"><i class="fas fa-plus mr-1"></i>Tambah Webhook</button>
+      </div>
+      ${hooks.length===0?'<div class="bg-gray-50 rounded-xl p-8 text-center text-gray-400"><i class="fas fa-bolt text-3xl mb-2"></i><p class="text-sm">Belum ada webhook.</p></div>':''}
+      <div class="space-y-3">
+        ${hooks.map(h=>`<div class="bg-white rounded-xl border p-4">
+          <div class="flex items-start justify-between mb-2">
+            <div><h4 class="font-semibold text-gray-800 text-sm">${h.name}</h4><p class="text-[10px] font-mono text-gray-400 break-all">${h.url}</p></div>
+            <div class="flex items-center gap-2">${h.is_active?'<span class="badge bg-green-100 text-green-700">Aktif</span>':'<span class="badge bg-gray-100 text-gray-500">Nonaktif</span>'}</div>
+          </div>
+          <div class="flex items-center gap-2 text-[10px] text-gray-500">
+            <span><i class="fas fa-bolt mr-0.5"></i>Events: ${h.events}</span>
+            <span>&middot; Sent: ${h.total_sent||0}</span>
+            ${h.last_triggered?`<span>&middot; Last: ${fmtDT(h.last_triggered)}</span>`:''}
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>
+    <div id="wh-simrsConfig" class="hidden">
+      <div class="bg-white rounded-xl border p-4">
+        <h3 class="font-semibold text-gray-800 text-sm mb-3"><i class="fas fa-hospital text-rssa-500 mr-1"></i>Konfigurasi Integrasi SIMRS</h3>
+        <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 mb-4">
+          <i class="fas fa-info-circle mr-1"></i>Integrasi SIMRS masih dalam tahap konseptual. Konfigurasi ini akan digunakan saat integrasi langsung dengan SIMRS tersedia.
+        </div>
+        <form onsubmit="saveSIMRSConfig(event)">
+          <div class="space-y-3">
+            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Base URL API SIMRS</label><input type="text" name="simrs_base_url" value="${confMap.simrs_base_url||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none" placeholder="https://simrs.rssa.go.id/api"></div>
+            <div><label class="block text-xs font-semibold text-gray-600 mb-1">API Key SIMRS</label><input type="text" name="simrs_api_key" value="${confMap.simrs_api_key||''}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none" placeholder="API key dari SIMRS"></div>
+            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Interval Sync (detik)</label><input type="number" name="simrs_sync_interval" value="${confMap.simrs_sync_interval||300}" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+            <div class="flex items-center gap-2"><input type="checkbox" name="simrs_sync_enabled" ${confMap.simrs_sync_enabled==='true'?'checked':''} class="rounded"><label class="text-xs text-gray-600">Aktifkan sinkronisasi otomatis</label></div>
+          </div>
+          <div class="flex justify-end mt-4">
+            <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg"><i class="fas fa-save mr-1"></i>Simpan Konfigurasi</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>`;
+}
+
+function showWebhookTab(btn, tabId) {
+  btn.parentElement.querySelectorAll('.tab-btn').forEach(b=>{b.classList.remove('active');b.classList.add('text-gray-500')});
+  btn.classList.add('active'); btn.classList.remove('text-gray-500');
+  document.querySelectorAll('[id^="wh-"]').forEach(t=>t.classList.add('hidden'));
+  document.getElementById(`wh-${tabId}`).classList.remove('hidden');
+}
+
+async function showWebhookFormModal() {
+  const modal = document.getElementById('modal'); const mc = document.getElementById('modalContent');
+  modal.classList.remove('hidden');
+  mc.innerHTML = `<div class="p-5">
+    <h3 class="text-base font-bold text-gray-800 mb-4"><i class="fas fa-bolt text-rssa-500 mr-2"></i>Tambah Webhook</h3>
+    <form onsubmit="saveWebhook(event)">
+      <div class="grid grid-cols-1 gap-3">
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Nama *</label><input type="text" name="name" required class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">URL *</label><input type="url" name="url" required placeholder="https://..." class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Events</label><input type="text" name="events" value="attendance:created" placeholder="attendance:created,access:denied" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Secret (opsional)</label><input type="text" name="secret" class="w-full border rounded-lg px-3 py-1.5 text-sm outline-none"></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 rounded-lg">Batal</button>
+        <button type="submit" class="px-4 py-2 bg-rssa-500 text-white text-sm rounded-lg"><i class="fas fa-save mr-1"></i>Simpan</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+async function saveWebhook(e) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  const r = await apiPost('/api/cms/webhooks', data);
+  if(r.success){closeModal();loadWebhooks()} else alert(r.error||'Gagal');
+}
+
+async function saveSIMRSConfig(e) {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target));
+  data.simrs_sync_enabled = data.simrs_sync_enabled === 'on' ? 'true' : 'false';
+  const r = await apiPut('/api/cms/simrs-config', data);
+  if(r.success) alert('Konfigurasi SIMRS berhasil disimpan'); else alert(r.error||'Gagal');
+}
+
+// =====================================================
+// ADMIN: AUDIT LOGS
+// =====================================================
+async function loadAuditLogs() {
+  const logs = await api('/api/cms/audit-logs?limit=100');
+  const ct = document.getElementById('content');
+  const actionColors = { login:'bg-blue-100 text-blue-700', create:'bg-green-100 text-green-700', update:'bg-amber-100 text-amber-700', delete:'bg-red-100 text-red-700', import:'bg-purple-100 text-purple-700', revoke:'bg-red-100 text-red-700' };
+  ct.innerHTML = `<div class="fade-in">
+    <h3 class="font-semibold text-gray-700 text-sm mb-3">${logs.length} log audit terakhir</h3>
+    ${logs.length===0?'<div class="bg-gray-50 rounded-xl p-8 text-center text-gray-400"><i class="fas fa-history text-3xl mb-2"></i><p class="text-sm">Belum ada aktivitas.</p></div>':`
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full"><thead class="bg-gray-50"><tr>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Waktu</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">User</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Aksi</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Tabel</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">ID</th>
+        <th class="px-3 py-2 text-left text-[10px] font-semibold text-gray-400">Detail</th>
+      </tr></thead><tbody class="divide-y divide-gray-50">
+        ${logs.map(l=>`<tr class="table-row">
+          <td class="px-3 py-2 text-[10px] font-mono text-gray-500">${fmtDT(l.created_at)}</td>
+          <td class="px-3 py-2 text-xs">${l.user_name||'-'} <span class="text-[9px] text-gray-400">${l.username||''}</span></td>
+          <td class="px-3 py-2"><span class="badge ${actionColors[l.action]||'bg-gray-100 text-gray-600'}">${l.action}</span></td>
+          <td class="px-3 py-2 text-[10px] font-mono text-gray-600">${l.table_name||'-'}</td>
+          <td class="px-3 py-2 text-[10px] text-gray-500">${l.record_id||'-'}</td>
+          <td class="px-3 py-2 text-[10px] text-gray-400 truncate max-w-[200px]">${l.new_value?l.new_value.substring(0,80)+'...':''}</td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`}
+  </div>`;
+}
+
 // Init
-showPage('dashboard');
+async function initApp() {
+  await checkAuth();
+  showPage('dashboard');
+}
+initApp();
