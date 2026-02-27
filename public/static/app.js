@@ -136,7 +136,7 @@ const PAGES = {
 function showPage(page) {
   // CMS/Admin pages require auth
   const cmsPages = ['cmsEmployees','cmsDepts','cmsDevices','cmsSchedules','cmsUsers','apiKeys','apiLogs','webhooks','auditLogs'];
-  if (cmsPages.includes(page) && !currentUser) { window.location.href = '/login'; return; }
+  if (cmsPages.includes(page) && !currentUser) { window.location.href = '/'; return; }
 
   document.querySelectorAll('.sidebar-link').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('pageTitle').textContent = PAGES[page]?.[0] || page;
@@ -1147,8 +1147,7 @@ async function doLogout() {
   await fetch('/api/auth/logout', {method:'POST'});
   currentUser = null;
   localStorage.removeItem('auth_user');
-  updateUIForAuth();
-  showPage('dashboard');
+  window.location.href = '/';
 }
 
 // Helper for auth API calls
@@ -2035,6 +2034,11 @@ async function loadAuditLogs() {
 // Init
 async function initApp() {
   await checkAuth();
+  // If not logged in, redirect to home page
+  if (!currentUser) {
+    window.location.href = '/';
+    return;
+  }
   showPage('dashboard');
 }
 initApp();

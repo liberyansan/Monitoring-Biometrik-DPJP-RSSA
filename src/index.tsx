@@ -611,9 +611,141 @@ app.get('/api/reports/sdm-overview', async (c) => {
 });
 
 // =====================================================
+// HOME PAGE (Public - Deskripsi Sistem & Tombol Login)
+// =====================================================
+app.get('/', async (c) => {
+  // Jika sudah login, redirect ke /app
+  const user = await getAuthUser(c);
+  if (user) return c.redirect('/app');
+
+  return c.html(`<!DOCTYPE html>
+<html lang="id"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitoring Biometrik - RSSA Malang</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+<script>tailwind.config={theme:{extend:{colors:{rssa:{50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#1e5fa8',600:'#1a5192',700:'#15437c',800:'#103566',900:'#0b2750'}}}}}</script>
+<style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');*{font-family:'Inter',sans-serif}
+.hero-bg{background:linear-gradient(135deg,#0b2750 0%,#1e5fa8 40%,#103566 100%);min-height:100vh}
+.float-anim{animation:floatUp 6s ease-in-out infinite}@keyframes floatUp{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+.fade-up{animation:fadeUp .8s ease-out}@keyframes fadeUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
+.feature-card{transition:all .3s}.feature-card:hover{transform:translateY(-4px);box-shadow:0 20px 40px -10px rgba(0,0,0,.15)}
+</style>
+</head>
+<body class="hero-bg">
+  <!-- Navigation -->
+  <nav class="absolute top-0 left-0 right-0 z-10 px-6 py-4">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-sm"><i class="fas fa-hospital text-xl text-white"></i></div>
+        <div><h1 class="font-bold text-white text-sm leading-tight">MONITORING Biometrik</h1><p class="text-[10px] text-blue-300">RS Saiful Anwar Malang</p></div>
+      </div>
+      <a href="/login" class="px-5 py-2 bg-white/20 backdrop-blur-sm text-white text-sm rounded-xl hover:bg-white/30 transition font-medium flex items-center gap-2 border border-white/20">
+        <i class="fas fa-sign-in-alt"></i> Masuk
+      </a>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <div class="flex flex-col items-center justify-center min-h-screen px-6 pt-20 pb-10">
+    <div class="max-w-4xl mx-auto text-center fade-up">
+      <div class="w-20 h-20 bg-white/15 rounded-3xl flex items-center justify-center mx-auto mb-6 backdrop-blur-sm float-anim">
+        <i class="fas fa-fingerprint text-4xl text-white"></i>
+      </div>
+      <h2 class="text-3xl md:text-5xl font-extrabold text-white mb-4 leading-tight">
+        Sistem Monitoring<br>Biometrik SDM
+      </h2>
+      <p class="text-base md:text-lg text-blue-200 max-w-2xl mx-auto mb-3">
+        Monitoring kehadiran dan kinerja seluruh Sumber Daya Manusia RS dr. Saiful Anwar Malang menggunakan teknologi <strong>Face Recognition</strong> dan <strong>Fingerprint</strong>.
+      </p>
+      <p class="text-sm text-blue-300/80 max-w-xl mx-auto mb-8">
+        Meliputi pemantauan DPJP, PPDS, tenaga keperawatan, kefarmasian, penunjang medis, manajemen, dan seluruh staf RS dengan 7 kategori SDM.
+      </p>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-3 mb-12">
+        <a href="/login" class="px-8 py-3 bg-white text-rssa-800 font-bold rounded-xl text-sm hover:bg-blue-50 transition shadow-lg flex items-center gap-2">
+          <i class="fas fa-sign-in-alt"></i> Masuk ke Sistem
+        </a>
+        <a href="#fitur" class="px-8 py-3 bg-white/10 text-white font-medium rounded-xl text-sm hover:bg-white/20 transition border border-white/20 flex items-center gap-2">
+          <i class="fas fa-info-circle"></i> Pelajari Lebih Lanjut
+        </a>
+      </div>
+
+      <!-- Stats Strip -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl mx-auto mb-16">
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3 border border-white/10">
+          <div class="text-2xl font-bold text-white">7</div>
+          <div class="text-[10px] text-blue-300">Kategori SDM</div>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3 border border-white/10">
+          <div class="text-2xl font-bold text-white">70+</div>
+          <div class="text-[10px] text-blue-300">Pegawai Terdaftar</div>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3 border border-white/10">
+          <div class="text-2xl font-bold text-white">15</div>
+          <div class="text-[10px] text-blue-300">Perangkat Biometrik</div>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3 border border-white/10">
+          <div class="text-2xl font-bold text-white">30</div>
+          <div class="text-[10px] text-blue-300">Departemen/Unit</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Features Section -->
+    <div id="fitur" class="max-w-5xl mx-auto w-full">
+      <h3 class="text-xl font-bold text-white text-center mb-6"><i class="fas fa-star text-yellow-400 mr-2"></i>Fitur Utama Sistem</h3>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="feature-card bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/10">
+          <div class="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center mb-3"><i class="fas fa-chart-pie text-blue-400 text-lg"></i></div>
+          <h4 class="font-semibold text-white text-sm mb-1">Dashboard Real-time</h4>
+          <p class="text-[11px] text-blue-300/80">Monitoring kehadiran seluruh SDM secara real-time dengan grafik interaktif dan live feed aktivitas.</p>
+        </div>
+        <div class="feature-card bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/10">
+          <div class="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center mb-3"><i class="fas fa-user-md text-green-400 text-lg"></i></div>
+          <h4 class="font-semibold text-white text-sm mb-1">Monitoring DPJP</h4>
+          <p class="text-[11px] text-blue-300/80">Pemantauan jadwal, kehadiran, dan compliance DPJP dengan tracking peran ganda (klinis & pendidikan).</p>
+        </div>
+        <div class="feature-card bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/10">
+          <div class="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center mb-3"><i class="fas fa-graduation-cap text-purple-400 text-lg"></i></div>
+          <h4 class="font-semibold text-white text-sm mb-1">Monitoring Pendidikan</h4>
+          <p class="text-[11px] text-blue-300/80">Tracking PPDS, Fellow, dan Co-Ass termasuk rotasi, pembimbing, dan kehadiran harian.</p>
+        </div>
+        <div class="feature-card bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/10">
+          <div class="w-10 h-10 bg-amber-500/20 rounded-lg flex items-center justify-center mb-3"><i class="fas fa-hospital-user text-amber-400 text-lg"></i></div>
+          <h4 class="font-semibold text-white text-sm mb-1">Staffing Monitor</h4>
+          <p class="text-[11px] text-blue-300/80">Monitoring ketersediaan SDM di area kritis dengan peringatan otomatis jika kekurangan tenaga.</p>
+        </div>
+        <div class="feature-card bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/10">
+          <div class="w-10 h-10 bg-red-500/20 rounded-lg flex items-center justify-center mb-3"><i class="fas fa-shield-alt text-red-400 text-lg"></i></div>
+          <h4 class="font-semibold text-white text-sm mb-1">Akses Ruangan</h4>
+          <p class="text-[11px] text-blue-300/80">Audit akses ruangan terbatas dengan verifikasi biometrik dan pencatatan otomatis.</p>
+        </div>
+        <div class="feature-card bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/10">
+          <div class="w-10 h-10 bg-cyan-500/20 rounded-lg flex items-center justify-center mb-3"><i class="fas fa-cogs text-cyan-400 text-lg"></i></div>
+          <h4 class="font-semibold text-white text-sm mb-1">CMS & Integrasi</h4>
+          <p class="text-[11px] text-blue-300/80">Kelola data pegawai, perangkat, jadwal, API key, webhook, dan konfigurasi integrasi SIMRS.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="mt-12 text-center">
+      <p class="text-[11px] text-blue-300/50">DIKST Fakultas Kedokteran Universitas Brawijaya x RS dr. Saiful Anwar Malang</p>
+      <p class="text-[10px] text-blue-300/30 mt-1">&copy; 2026 - Sistem Monitoring Biometrik SDM</p>
+    </div>
+  </div>
+</body></html>`);
+});
+
+// =====================================================
 // LOGIN PAGE
 // =====================================================
-app.get('/login', (c) => {
+app.get('/login', async (c) => {
+  // Jika sudah login, redirect ke /app
+  const user = await getAuthUser(c);
+  if (user) return c.redirect('/app');
+
   return c.html(`<!DOCTYPE html>
 <html lang="id"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -652,7 +784,10 @@ app.get('/login', (c) => {
         <i class="fas fa-sign-in-alt"></i> Masuk
       </button>
     </form>
-    <div class="mt-6 pt-4 border-t text-center">
+    <div class="mt-4 text-center">
+      <a href="/" class="text-xs text-gray-400 hover:text-rssa-500 transition"><i class="fas fa-arrow-left mr-1"></i>Kembali ke Beranda</a>
+    </div>
+    <div class="mt-4 pt-4 border-t text-center">
       <p class="text-[10px] text-gray-400">Demo Accounts:</p>
       <div class="grid grid-cols-2 gap-1 mt-1 text-[9px] text-gray-400">
         <span>admin / admin123</span><span>sdm / sdm123</span>
@@ -671,7 +806,7 @@ async function doLogin(e){
   try{
     const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value,password:document.getElementById('password').value})});
     const d=await r.json();
-    if(d.success){localStorage.setItem('auth_user',JSON.stringify(d.user));window.location.href='/'}
+    if(d.success){localStorage.setItem('auth_user',JSON.stringify(d.user));window.location.href='/app'}
     else{err.classList.remove('hidden');document.getElementById('errorText').textContent=d.error||'Login gagal'}
   }catch(ex){err.classList.remove('hidden');document.getElementById('errorText').textContent='Koneksi gagal'}
   btn.innerHTML='<i class="fas fa-sign-in-alt"></i> Masuk';btn.disabled=false;
@@ -681,14 +816,18 @@ async function doLogin(e){
 });
 
 // =====================================================
-// MAIN APP (Frontend with CMS + API Management)
+// MAIN APP (Protected - requires login)
 // =====================================================
-app.get('/', (c) => {
+app.get('/app', async (c) => {
+  // Cek autentikasi - redirect ke home jika belum login
+  const user = await getAuthUser(c);
+  if (!user) return c.redirect('/');
+
   return c.html(`<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MONITORING Biometrik - RSSA Malang</title>
+  <title>Sistem Monitoring Biometrik - RSSA Malang</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
